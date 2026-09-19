@@ -2,7 +2,6 @@
 #include <pspdisplay.h>
 #include <pspctrl.h>
 #include <pspgu.h>
-#include <pspgum.h>
 #include <stdlib.h>
 
 PSP_MODULE_INFO("Zooba 2 PSP", 0, 1, 1);
@@ -30,53 +29,53 @@ int setup_callbacks(void) {
     return thid;
 }
 
-// Estrutura para os vértices dos gráficos na tela do PSP
 typedef struct {
+    float x, y;
+    float w, h;
     unsigned int color;
-    short x, y, z;
-} Vertex;
+} Rect;
 
-void draw_quad(short x, short y, short w, short h, unsigned int color) {
-    Vertex* vertices = (Vertex*)sceGuGetMemory(2 * sizeof(Vertex));
+void draw_rect(float x, float y, float w, float h, unsigned int color) {
+    // Alinha diretamente para coordenadas de tela 2D simples
+    struct Vertex {
+        unsigned int color;
+        float x, y, z;
+    };
+
+    struct Vertex* vertices = (struct Vertex*)sceGuGetMemory(2 * sizeof(struct Vertex));
     if (!vertices) return;
 
     vertices[0].color = color;
     vertices[0].x = x;
     vertices[0].y = y;
-    vertices[0].z = 0;
+    vertices[0].z = 0.0f;
 
     vertices[1].color = color;
     vertices[1].x = x + w;
     vertices[1].y = y + h;
-    vertices[1].z = 0;
+    vertices[1].z = 0.0f;
 
-    sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, vertices);
+    sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, vertices);
 }
-
-typedef struct {
-    int x, y;
-    int speedX, speedY;
-    int ativo;
-} Inimigo;
 
 int main(void) {
     setup_callbacks();
 
-    // Inicialização da Gu (Gráficos do PSP)
     sceGuInit();
     sceGuStart(GU_DIRECT, list);
     sceGuDrawBuffer(GU_PSM_8888, (void*)0, 512);
     sceGuDispBuffer(480, 272, (void*)0x88000, 512);
     sceGuDepthBuffer((void*)0x110000, 512);
-    sceGuOffset(2048 - (480 / 2), 2048 - (272 / 2));
-    sceGuViewport(2048, 2048, 480, 272);
+    
+    sceGuOffset(0, 0);
+    sceGuViewport(0, 0, 480, 272);
     sceGuDepthRange(0xcf9c, 0x50);
+    
     sceGuScissor(0, 0, 480, 272);
     sceGuEnable(GU_SCISSOR_TEST);
-    sceGuEnable(GU_BLEND);
-    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
     sceGuFinish();
     sceGuSync(0, 0);
+
     sceDisplayWaitVblankStart();
     sceGuDisplay(GU_TRUE);
 
@@ -84,17 +83,14 @@ int main(void) {
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
-    // Jogador
-    int playerX = 220;
-    int playerY = 120;
-    int velocidade = 3;
+    float playerX = 220.0f;
+    float playerY = 120.0f;
+    float velocidade = 3.5f;
 
-    // Inimigos do Zooba 2
-    Inimigo inimigos[3] = {
-        {80, 50, 2, 1, 1},
-        {350, 60, -2, 2, 1},
-        {200, 200, 1, -2, 1}
-    };
+    float enX[3] = {80.0f, 350.0f, 200.0f};
+    float enY[3] = {50.0f, 180.0f, 100.0f};
+    float enSpdX[3] = {2.0f, -2.0f, 1.5f};
+    float enSpdY[3] = {1.0f, 1.5f, -2.0f};
 
     while (1) {
         sceCtrlReadBufferPositive(&pad, 1);
@@ -105,43 +101,38 @@ int main(void) {
         if (pad.Ly < 64 || (pad.Buttons & PSP_CTRL_UP))    playerY -= velocidade;
         if (pad.Ly > 192 || (pad.Buttons & PSP_CTRL_DOWN))  playerY += velocidade;
 
-        // Limites da tela
-        if (playerX < 10) playerX = 10;
-        if (playerX > 450) playerX = 450;
-        if (playerY < 10) playerY = 10;
-        if (playerY > 240) playerY = 240;
+        // Limites de tela (480x272)
+        if (playerX < 0.0f) playerX = 0.0f;
+        if (playerX > 450.0f) playerX = 450.0f;
+        if (playerY < 0.0f) playerY = 0.0f;
+        if (playerY > 242.0f) playerY = 242.0f;
 
-        // Atualiza IA dos Inimigos
+        // Atualiza Inimigos
         for (int i = 0; i < 3; i++) {
-            if (inimigos[i].ativo) {
-                inimigos[i].x += inimigos[i].speedX;
-                inimigos[i].y += inimigos[i].speedY;
+            enX[i] += enSpdX[i];
+            enY[i] += enSpdY[i];
 
-                if (inimigos[i].x <= 10 || inimigos[i].x >= 450) inimigos[i].speedX *= -1;
-                if (inimigos[i].y <= 10 || inimigos[i].y >= 240) inimigos[i].speedY *= -1;
-            }
+            if (enX[i] <= 0.0f || enX[i] >= 450.0f) enSpdX[i] *= -1.0f;
+            if (enY[i] <= 0.0f || enY[i] >= 242.0f) enSpdY[i] *= -1.0f;
         }
 
-        // Renderização gráfica na tela
+        // Renderização limpa
         sceGuStart(GU_DIRECT, list);
-        sceGuClearColor(0xFF222222); // Cor de fundo (Cinza escuro estilo arena)
-        sceGuClearDepth(0);
-        sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
+        sceGuClearColor(0xFF332211); // Cor de fundo azulada/marrom para ver que renderizou
+        sceGuClear(GU_COLOR_BUFFER_BIT);
 
-        // Desenha o Jogador (Cor Verde)
-        unsigned int corJogador = 0xFF00FF00;
-        if (pad.Buttons & PSP_CTRL_SQUARE)   corJogador = 0xFFFF0000; // Vermelho (Shotgun)
-        else if (pad.Buttons & PSP_CTRL_TRIANGLE) corJogador = 0xFF00FFFF; // Amarelo/Ciano (Lança)
-        else if (pad.Buttons & PSP_CTRL_CROSS)    corJogador = 0xFFFF00FF; // Rosa (Bomba)
-        else if (pad.Buttons & PSP_CTRL_CIRCLE)   corJogador = 0xFFFFFFFF; // Branco (Kit Médico)
+        // Cor do Jogador baseada nos botões
+        unsigned int corJogador = 0xFF00FF00; // Verde padrão
+        if (pad.Buttons & PSP_CTRL_SQUARE)   corJogador = 0xFF0000FF; // Vermelho
+        else if (pad.Buttons & PSP_CTRL_TRIANGLE) corJogador = 0xFF00FFFF; // Amarelo
+        else if (pad.Buttons & PSP_CTRL_CROSS)    corJogador = 0xFFFF00FF; // Rosa
 
-        draw_quad(playerX, playerY, 20, 20, corJogador);
+        // Desenha Jogador
+        draw_rect(playerX, playerY, 20.0f, 20.0f, corJogador);
 
-        // Desenha os Inimigos (Cor Azul)
+        // Desenha Inimigos
         for (int i = 0; i < 3; i++) {
-            if (inimigos[i].ativo) {
-                draw_quad(inimigos[i].x, inimigos[i].y, 20, 20, 0xFFFF5555);
-            }
+            draw_rect(enX[i], enY[i], 20.0f, 20.0f, 0xFF5555FF);
         }
 
         sceGuFinish();
